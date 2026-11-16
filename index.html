@@ -580,8 +580,8 @@
 <body data-mode="intro" data-entry="closed">
   <div class="video-stage" aria-hidden="true">
     <video id="intro-video" class="scene" src="网站素材/intro-loop.mp4" autoplay loop playsinline preload="auto" tabindex="-1"></video>
-    <video id="main-video" class="scene" src="网站素材/main.mp4" muted playsinline preload="auto" tabindex="-1"></video>
-    <video id="outro-video" class="scene" src="网站素材/outro-loop.mp4" loop muted playsinline preload="auto" tabindex="-1"></video>
+    <video id="main-video" class="scene" data-src="网站素材/main.mp4" muted playsinline preload="none" tabindex="-1"></video>
+    <video id="outro-video" class="scene" data-src="网站素材/outro-loop.mp4" loop muted playsinline preload="none" tabindex="-1"></video>
     <canvas id="restore-frame" class="restore-frame" aria-hidden="true"></canvas>
   </div>
   <div class="cinema-shade" aria-hidden="true"></div>
@@ -638,7 +638,7 @@
   </div>
 
   <p id="media-status" class="media-status" role="status" hidden></p>
-  <audio id="outro-music" src="网站素材/RIPmaidou.mp3" loop preload="auto"></audio>
+  <audio id="outro-music" src="网站素材/RIPmaidou.mp3" loop preload="none"></audio>
 
   <noscript><div class="noscript-note">请启用 JavaScript，才能跟随滚动观看麦兜的故事。</div></noscript>
 
@@ -715,6 +715,13 @@
       const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
       const finite = (value) => Number.isFinite(value) && value > 0;
       const hasFinePointer = () => window.matchMedia && window.matchMedia('(pointer: fine)').matches;
+      const shouldDeferHeavyMedia = () => {
+        const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+        return Boolean(
+          (window.matchMedia && window.matchMedia('(max-width: 760px), (pointer: coarse)').matches) ||
+          (connection && connection.saveData)
+        );
+      };
 
       function setDuration(nextDuration) {
         if (!finite(nextDuration)) return;
@@ -758,6 +765,16 @@
 
       function safePause(video) {
         try { video.pause(); } catch (_) { /* media may be unavailable */ }
+      }
+
+      function ensureVideoLoaded(video, preload) {
+        if (!video || video.classList.contains('is-broken')) return;
+        video.preload = preload || 'metadata';
+        if (video.getAttribute('src')) return;
+        const source = video.dataset.src;
+        if (!source) return;
+        video.setAttribute('src', source);
+        try { video.load(); } catch (_) { /* the source will load on first playback */ }
       }
 
       function clearRestoreFrame() {
@@ -894,6 +911,7 @@
           stopMainAudio();
           safePause(intro);
           safePause(main);
+          ensureVideoLoaded(outro, 'auto');
           safePlay(outro);
           startOutroMusic();
         }
@@ -902,6 +920,7 @@
       function applyProgress(progress) {
         const p = clamp(progress, 0, 1);
         targetTime = p * duration;
+        if (p >= 0.8) ensureVideoLoaded(outro, 'auto');
         const mode = p >= 1 ? 'outro' : (p <= 0.00001 ? 'intro' : 'main');
         setMode(mode);
         progressFill.style.transform = 'scaleY(' + p + ')';
@@ -1078,6 +1097,7 @@
       function startOutroMusic() {
         if (!soundEnabled || currentMode !== 'outro') return;
         try {
+          music.preload = 'auto';
           music.loop = true;
           music.muted = false;
           if (music.paused) {
@@ -1175,6 +1195,7 @@
       function enterStory() {
         if (entryOpened) return;
         entryOpened = true;
+        ensureVideoLoaded(main, shouldDeferHeavyMedia() ? 'metadata' : 'auto');
         body.dataset.entry = 'open';
         root.classList.remove('entry-locked');
         window.scrollTo(0, 0);
@@ -1549,6 +1570,14 @@
           }
         }
       });
+
+      if (shouldDeferHeavyMedia()) {
+        music.preload = 'none';
+      } else {
+        ensureVideoLoaded(main, 'auto');
+        ensureVideoLoaded(outro, 'auto');
+        music.preload = 'auto';
+      }
 
       updateScrollHeight();
       makeProgressTicks();
