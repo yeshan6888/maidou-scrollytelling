@@ -298,6 +298,10 @@
       pointer-events: none;
     }
 
+    .caption--final {
+      bottom: calc(clamp(32px, 7vh, 82px) + env(safe-area-inset-bottom));
+    }
+
     .caption.is-visible {
       opacity: 1;
       transform: translate3d(0, 0, 0);
@@ -474,6 +478,10 @@
         bottom: calc(clamp(36px, 7.2vh, 66px) + env(safe-area-inset-bottom));
       }
 
+      .caption--final {
+        bottom: calc(clamp(22px, 5.5vh, 48px) + env(safe-area-inset-bottom));
+      }
+
       .caption-grid {
         grid-template-columns: minmax(0, 1fr);
         gap: 16px;
@@ -533,6 +541,7 @@
     @media (max-height: 500px) and (orientation: landscape) {
       .topline { top: max(13px, env(safe-area-inset-top)); }
       .caption { bottom: calc(18px + env(safe-area-inset-bottom)); }
+      .caption--final { bottom: calc(12px + env(safe-area-inset-bottom)); }
       .caption-grid {
         grid-template-columns: minmax(0, 1fr);
         gap: 0;
@@ -838,6 +847,7 @@
           activeCaption = -1;
           caption.classList.remove('is-visible');
           caption.classList.remove('caption--left-mid');
+          caption.classList.remove('caption--final');
           caption.setAttribute('aria-hidden', 'true');
           window.clearTimeout(captionTimer);
           return;
@@ -852,12 +862,14 @@
 
         if (next < 0) {
           caption.classList.remove('caption--left-mid');
+          caption.classList.remove('caption--final');
           return;
         }
 
         captionTimer = window.setTimeout(() => {
           const beat = BEATS[next];
           caption.classList.toggle('caption--left-mid', next === 2 || next === 3);
+          caption.classList.toggle('caption--final', next === BEATS.length - 1);
           const lines = beat.copy.split('\n');
           const copy = document.createDocumentFragment();
           copy.append(document.createTextNode(lines[0] || ''));
@@ -1103,16 +1115,28 @@
 
       function replayFromBeginning() {
         window.clearTimeout(idleTimer);
+        idleTimer = 0;
+        window.clearTimeout(captionTimer);
+        captionTimer = 0;
         cancelSnap();
+        touchStart = null;
+        touchDidMove = false;
         lastSettledBeatIndex = -1;
         lastUserScrollDirection = 1;
         ignoreIdleUntil = performance.now() + 1000;
+        targetTime = 0;
+        activeCaption = -1;
+        stopMainAudio();
+        safePause(main);
+        safePause(outro);
         try {
           if (intro.readyState >= 1) intro.currentTime = 0;
+          if (main.readyState >= 1) main.currentTime = 0;
+          if (outro.readyState >= 1) outro.currentTime = 0;
         } catch (_) { /* metadata may not be ready */ }
         window.scrollTo(0, 0);
         lastObservedScrollY = window.scrollY;
-        updateFromScroll();
+        applyProgress(0);
         if (soundEnabled) unlockAudioFromGesture();
       }
 
@@ -1381,6 +1405,7 @@
       main.addEventListener('loadedmetadata', () => setDuration(main.duration));
       main.addEventListener('durationchange', () => setDuration(main.duration));
       main.addEventListener('ended', () => {
+        if (!entryOpened || currentMode !== 'main') return;
         window.clearTimeout(idleTimer);
         if (snapInProgress) cancelSnap();
         lastSettledBeatIndex = BEATS.length - 1;
