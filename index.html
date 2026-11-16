@@ -15,7 +15,8 @@
       document.documentElement.classList.add('mobile-device');
       const screenType = window.screen && window.screen.orientation && window.screen.orientation.type;
       const legacyAngle = typeof window.orientation === 'number' ? Math.abs(window.orientation) : 0;
-      const landscape = (screenType && screenType.indexOf('landscape') !== -1) || legacyAngle === 90 || window.innerWidth > window.innerHeight;
+      const landscape = (screenType && screenType.indexOf('landscape') !== -1) || legacyAngle === 90 || legacyAngle === 270 || window.innerWidth > window.innerHeight;
+      if (landscape) document.documentElement.classList.add('mobile-landscape');
       const portrait = !landscape && window.innerHeight >= window.innerWidth;
       if (portrait) document.documentElement.classList.add('orientation-blocked');
     })();
@@ -681,6 +682,17 @@
       .caption h1 { font-size: clamp(1.45rem, 4.3vh, 2.2rem); line-height: 1.12; }
     }
 
+    html.mobile-landscape .entry-gate {
+      width: 100vw;
+      height: 100vh;
+      height: 100dvh;
+      padding: max(12px, env(safe-area-inset-top)) 20px max(12px, env(safe-area-inset-bottom));
+    }
+
+    html.mobile-landscape .entry-content { gap: 8px; }
+    html.mobile-landscape .entry-button { width: min(26vw, 240px, calc(100vw - 40px)); }
+    html.mobile-landscape .entry-hint { font-size: 10px; }
+
     @media (prefers-reduced-motion: reduce) {
       .scene, .caption { transition-duration: .2s; }
       .cue-arrow { animation: none; }
@@ -843,7 +855,7 @@
       let orientationStoredProgress = 0;
       let orientationFadeTimer = 0;
       let orientationSyncFrame = 0;
-      let introFallbackAttempted = false;
+      const standardVideoFallbacks = new WeakSet();
       const orientationInertState = new Map();
 
       const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
@@ -885,24 +897,30 @@
       }
 
       function isPortraitViewport() {
-        const visualViewport = window.visualViewport;
-        const viewports = [
-          { width: window.innerWidth, height: window.innerHeight },
-          { width: root.clientWidth, height: root.clientHeight },
-          visualViewport && { width: visualViewport.width, height: visualViewport.height }
-        ].filter((viewport) => viewport && viewport.width > 0 && viewport.height > 0 && viewport.width !== viewport.height);
-        const landscapeVotes = viewports.filter((viewport) => viewport.width > viewport.height).length;
-        const portraitVotes = viewports.length - landscapeVotes;
-        if (landscapeVotes > portraitVotes) return false;
-        if (portraitVotes > landscapeVotes) return true;
-
         const screenType = window.screen && window.screen.orientation && window.screen.orientation.type;
-        if (screenType && screenType.indexOf('landscape') !== -1) return false;
-        if (screenType && screenType.indexOf('portrait') !== -1) return true;
         const legacyAngle = typeof window.orientation === 'number' ? Math.abs(window.orientation) : null;
-        if (legacyAngle === 90) return false;
+        // Android browsers can keep a portrait-sized layout viewport briefly after rotation.
+        // Trust either physical-orientation signal when it reports landscape.
+        if ((screenType && screenType.indexOf('landscape') !== -1) || legacyAngle === 90 || legacyAngle === 270) return false;
+        if (window.innerWidth > window.innerHeight) return false;
+        if (screenType && screenType.indexOf('portrait') !== -1) return true;
         if (legacyAngle === 0 || legacyAngle === 180) return true;
-        return orientationMediaQuery ? orientationMediaQuery.matches : window.innerHeight >= window.innerWidth;
+        if (orientationMediaQuery) return orientationMediaQuery.matches;
+        return window.innerHeight >= window.innerWidth;
+      }
+
+      function isLandscapeDevice() {
+        const screenType = window.screen && window.screen.orientation && window.screen.orientation.type;
+        if (screenType && screenType.indexOf('landscape') !== -1) return true;
+        const legacyAngle = typeof window.orientation === 'number' ? Math.abs(window.orientation) : null;
+        if (legacyAngle === 90 || legacyAngle === 270) return true;
+        if (screenType && screenType.indexOf('portrait') !== -1 && window.innerWidth <= window.innerHeight) return false;
+        if (legacyAngle !== null && legacyAngle !== 90 && window.innerWidth <= window.innerHeight) return false;
+        return window.innerWidth > window.innerHeight;
+      }
+
+      function usesSidewaysTouchAxis() {
+        return isLandscapeDevice() !== (window.innerWidth > window.innerHeight);
       }
 
       function setOrientationInert(locked) {
@@ -976,6 +994,7 @@
 
       function syncOrientationGate() {
         if (!mobileOrientationEnabled) return;
+        root.classList.toggle('mobile-landscape', isLandscapeDevice());
         if (isPortraitViewport()) enterPortraitGate();
         else leavePortraitGate();
       }
@@ -1018,6 +1037,17 @@
         if (!source) return;
         video.setAttribute('src', source);
         try { video.load(); } catch (_) { /* the source will load on first playback */ }
+      }
+
+      function fallbackToStandardVideo(video) {
+        if (!video || standardVideoFallbacks.has(video) || !video.dataset.src ||
+            !video.dataset.mobileSrc || video.getAttribute('src') !== video.dataset.mobileSrc) return false;
+        standardVideoFallbacks.add(video);
+        safePause(video);
+        video.classList.remove('is-broken');
+        video.setAttribute('src', video.dataset.src);
+        try { video.load(); } catch (_) { /* playback will retry after the source change */ }
+        return true;
       }
 
       function clearRestoreFrame() {
@@ -1107,7 +1137,11 @@
           if (result && typeof result.then === 'function') {
             result.then(() => {
               if (!intro.muted) introAudioUnlocked = true;
-            }).catch(() => {
+            }).catch((error) => {
+              if (error && error.name === 'NotSupportedError' && fallbackToStandardVideo(intro)) {
+                window.setTimeout(() => { if (currentMode === 'intro') playIntro(); }, 0);
+                return;
+              }
               resumeMuted();
             });
           } else if (!intro.muted) {
@@ -1285,6 +1319,10 @@
         };
         safePlay(outro).then((started) => {
           if (started || currentMode !== 'outro' || outro.classList.contains('is-broken')) return;
+          if (fallbackToStandardVideo(outro)) {
+            window.setTimeout(() => { if (currentMode === 'outro') playOutroLoop(); }, 0);
+            return;
+          }
           if (outro.readyState >= 2) window.setTimeout(() => {
             if (currentMode === 'outro') safePlay(outro);
           }, 120);
@@ -1479,7 +1517,16 @@
 
       function enterStory() {
         if (entryOpened) return;
+        if (orientationBlocked && !isPortraitViewport()) {
+          orientationBlocked = false;
+          orientationFading = false;
+          window.clearTimeout(orientationFadeTimer);
+          root.classList.remove('orientation-blocked', 'orientation-fading');
+          setOrientationInert(false);
+        }
+        if (orientationBlocked) return;
         entryOpened = true;
+        ensureVideoLoaded(intro, 'auto');
         ensureVideoLoaded(main, shouldDeferHeavyMedia() ? 'metadata' : 'auto');
         body.dataset.entry = 'open';
         root.classList.remove('entry-locked');
@@ -1490,6 +1537,7 @@
         ignoreIdleUntil = performance.now() + 700;
         updateScrollHeight();
         updateFromScroll();
+        if (currentMode === 'intro') playIntro();
         if (soundEnabled) unlockAudioFromGesture();
       }
 
@@ -1701,7 +1749,10 @@
         const touch = event.touches[0];
         const dx = touch.clientX - touchStart.x;
         const dy = touch.clientY - touchStart.y;
-        if (Math.abs(dy) > 8 && Math.abs(dy) > Math.abs(dx)) {
+        const sideways = usesSidewaysTouchAxis() || (isLandscapeDevice() && Math.abs(dx) > Math.abs(dy));
+        const primaryMove = sideways ? dx : dy;
+        const crossMove = sideways ? dy : dx;
+        if (Math.abs(primaryMove) > 8 && Math.abs(primaryMove) > Math.abs(crossMove)) {
           touchDidMove = true;
           if (event.cancelable) event.preventDefault();
         }
@@ -1717,16 +1768,24 @@
         const start = touchStart;
         touchStart = null;
         const touch = event.changedTouches && event.changedTouches[0];
-        if (!touch || !touchDidMove) return;
+        if (!touch) return;
         touchDidMove = false;
 
-        const delta = start.y - touch.clientY;
-        const horizontalDelta = touch.clientX - start.x;
+        const rawX = touch.clientX - start.x;
+        const rawY = touch.clientY - start.y;
+        const sideways = usesSidewaysTouchAxis() || (isLandscapeDevice() && Math.abs(rawX) > Math.abs(rawY));
+        const angle = window.screen && window.screen.orientation && Number.isFinite(window.screen.orientation.angle)
+          ? window.screen.orientation.angle
+          : (typeof window.orientation === 'number' ? window.orientation : 0);
+        let delta = sideways
+          ? (Math.abs(angle) === 270 || angle === -90 ? rawX : -rawX)
+          : -rawY;
+        const crossDelta = sideways ? start.y - touch.clientY : touch.clientX - start.x;
         const elapsed = performance.now() - start.time;
         const enoughTravel = Math.abs(delta) >= 24 || (elapsed < 240 && Math.abs(delta) >= 12);
-        if (!enoughTravel || Math.abs(delta) <= Math.abs(horizontalDelta)) return;
+        if (!enoughTravel || Math.abs(delta) <= Math.abs(crossDelta)) return;
 
-        const direction = delta > 0 ? 1 : -1;
+        const direction = sideways && lastSettledBeatIndex < 0 ? 1 : (delta > 0 ? 1 : -1);
         lastUserScrollDirection = direction;
         ignoreIdleUntil = 0;
         window.clearTimeout(idleTimer);
@@ -1814,16 +1873,9 @@
 
       [intro, main, outro].forEach((video) => {
         video.addEventListener('error', () => {
-          if (video === intro && !introFallbackAttempted && video.getAttribute('src') === video.dataset.mobileSrc && video.dataset.src) {
-            introFallbackAttempted = true;
-            safePause(intro);
-            intro.classList.remove('is-broken');
-            intro.removeAttribute('src');
-            try { intro.load(); } catch (_) { /* continue with the standard source */ }
-            intro.setAttribute('src', intro.dataset.src);
-            intro.muted = true;
-            try { intro.load(); } catch (_) { /* playback will retry on the next gesture */ }
-            if (currentMode === 'intro') playIntro();
+          if (fallbackToStandardVideo(video)) {
+            if (video === intro && currentMode === 'intro') playIntro();
+            if (video === outro && currentMode === 'outro') playOutroLoop();
             return;
           }
           const label = video === intro ? '片头动画' : (video === main ? '主影片' : '片尾动画');
@@ -1886,7 +1938,11 @@
       window.addEventListener('touchstart', onTouchStart, { passive: true });
       window.addEventListener('touchmove', onTouchMove, { passive: false });
       window.addEventListener('touchend', onTouchEnd, { passive: true });
-      window.addEventListener('touchcancel', () => { touchStart = null; touchDidMove = false; }, { passive: true });
+      window.addEventListener('touchcancel', (event) => {
+        if (touchStart && !orientationBlocked) onTouchEnd(event);
+        touchStart = null;
+        touchDidMove = false;
+      }, { passive: true });
       window.addEventListener('pointerdown', onUserIntent, { passive: true });
       window.addEventListener('keydown', (event) => {
         const scrollKeys = ['ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', ' ', 'Home', 'End'];
