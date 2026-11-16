@@ -141,19 +141,23 @@
 
     .orientation-gate {
       position: fixed;
-      z-index: 30;
-      inset: 0;
-      display: grid;
-      place-items: center;
+      z-index: 2147483647;
+      top: 0;
+      right: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      height: 100dvh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
       padding:
-        max(28px, env(safe-area-inset-top))
-        max(28px, env(safe-area-inset-right))
-        max(28px, env(safe-area-inset-bottom))
-        max(28px, env(safe-area-inset-left));
+        calc(24px + env(safe-area-inset-top, 0px))
+        calc(24px + env(safe-area-inset-right, 0px))
+        calc(24px + env(safe-area-inset-bottom, 0px))
+        calc(24px + env(safe-area-inset-left, 0px));
       color: var(--cream);
-      background: rgba(17, 19, 21, .94);
-      -webkit-backdrop-filter: blur(12px);
-      backdrop-filter: blur(12px);
+      background: #111315;
       opacity: 0;
       visibility: hidden;
       pointer-events: none;
@@ -177,10 +181,13 @@
     }
 
     .orientation-message {
-      display: grid;
-      justify-items: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
       gap: 24px;
       width: min(100%, 460px);
+      min-width: 0;
       text-align: center;
     }
 
@@ -191,12 +198,16 @@
     }
 
     .orientation-message p {
-      max-width: 22em;
+      width: min(100%, 22em);
+      max-width: 100%;
       margin: 0;
       font: 500 clamp(17px, 3vw, 21px)/1.85 var(--sans);
       letter-spacing: .045em;
-      text-wrap: pretty;
+      overflow-wrap: anywhere;
+      text-wrap: wrap;
     }
+
+    .orientation-message p span { display: block; }
 
     .entry-gate {
       position: fixed;
@@ -691,7 +702,7 @@
         <path d="M24 33h6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
         <path d="M8 23a19 19 0 0 1 30-13m0 0V4m0 6h-6M46 31a19 19 0 0 1-30 13m0 0v6m0-6h6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
-      <p>为保证良好体验，请将手机横屏后继续浏览</p>
+      <p><span>为保证良好体验，</span><span>请将手机横屏后继续浏览</span></p>
     </div>
   </div>
 
