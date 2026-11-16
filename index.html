@@ -78,6 +78,26 @@
       background: transparent;
     }
 
+    .restore-frame {
+      position: absolute;
+      z-index: 2;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      object-position: center;
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transition: opacity .16s ease, visibility 0s linear .16s;
+    }
+
+    .restore-frame.is-visible {
+      opacity: 1;
+      visibility: visible;
+      transition: opacity .12s ease;
+    }
+
     body[data-mode="intro"] #intro-video { opacity: 1; }
     body[data-mode="main"] #main-video { opacity: 1; }
     body[data-mode="outro"] #outro-video { opacity: 1; }
@@ -562,6 +582,7 @@
     <video id="intro-video" class="scene" src="网站素材/intro-loop.mp4" autoplay loop playsinline preload="auto" tabindex="-1"></video>
     <video id="main-video" class="scene" src="网站素材/main.mp4" muted playsinline preload="auto" tabindex="-1"></video>
     <video id="outro-video" class="scene" src="网站素材/outro-loop.mp4" loop muted playsinline preload="auto" tabindex="-1"></video>
+    <canvas id="restore-frame" class="restore-frame" aria-hidden="true"></canvas>
   </div>
   <div class="cinema-shade" aria-hidden="true"></div>
 
@@ -645,6 +666,7 @@
       const intro = document.getElementById('intro-video');
       const main = document.getElementById('main-video');
       const outro = document.getElementById('outro-video');
+      const restoreFrame = document.getElementById('restore-frame');
       const music = document.getElementById('outro-music');
       const caption = document.getElementById('caption');
       const captionText = document.getElementById('caption-text');
@@ -685,6 +707,10 @@
       let musicFadeCompletion = null;
       let touchStart = null;
       let touchDidMove = false;
+      let restoreFrameVideo = null;
+      let restoreFramePlayingHandler = null;
+      let restoreFrameCallbackId = 0;
+      let restoreFrameFallbackTimer = 0;
 
       const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
       const finite = (value) => Number.isFinite(value) && value > 0;
@@ -734,6 +760,75 @@
         try { video.pause(); } catch (_) { /* media may be unavailable */ }
       }
 
+      function clearRestoreFrame() {
+        window.clearTimeout(restoreFrameFallbackTimer);
+        restoreFrameFallbackTimer = 0;
+        if (restoreFrameVideo && restoreFramePlayingHandler) {
+          restoreFrameVideo.removeEventListener('playing', restoreFramePlayingHandler);
+          restoreFrameVideo.removeEventListener('seeked', restoreFramePlayingHandler);
+        }
+        if (restoreFrameVideo && restoreFrameCallbackId && restoreFrameVideo.cancelVideoFrameCallback) {
+          restoreFrameVideo.cancelVideoFrameCallback(restoreFrameCallbackId);
+        }
+        restoreFrameVideo = null;
+        restoreFramePlayingHandler = null;
+        restoreFrameCallbackId = 0;
+        restoreFrame.classList.remove('is-visible');
+      }
+
+      function captureActiveVideoFrame() {
+        const video = currentMode === 'intro' ? intro : (currentMode === 'main' ? main : outro);
+        if (!video || video.readyState < 2 || !video.videoWidth || !video.videoHeight) return false;
+        try {
+          const scale = Math.min(1, 1920 / video.videoWidth, 1080 / video.videoHeight);
+          restoreFrame.width = Math.round(video.videoWidth * scale);
+          restoreFrame.height = Math.round(video.videoHeight * scale);
+          const context = restoreFrame.getContext('2d', { alpha: false });
+          if (!context) return false;
+          context.drawImage(video, 0, 0, restoreFrame.width, restoreFrame.height);
+          restoreFrameVideo = video;
+          restoreFrame.classList.add('is-visible');
+          return true;
+        } catch (_) {
+          return false;
+        }
+      }
+
+      function keepRestoreFrameUntilVideoUpdates(video) {
+        if (!restoreFrame.classList.contains('is-visible') || restoreFrameVideo !== video) return;
+        const modeWhenResuming = currentMode;
+        const release = () => {
+          if (currentMode !== modeWhenResuming || restoreFrameVideo !== video) return;
+          clearRestoreFrame();
+        };
+        const afterPaint = () => {
+          if (restoreFrameVideo !== video) return;
+          video.removeEventListener('playing', afterPaint);
+          video.removeEventListener('seeked', afterPaint);
+          if (typeof video.requestVideoFrameCallback === 'function') {
+            restoreFrameCallbackId = video.requestVideoFrameCallback(() => {
+              restoreFrameCallbackId = 0;
+              release();
+            });
+          } else {
+            window.requestAnimationFrame(() => window.requestAnimationFrame(release));
+          }
+        };
+
+        restoreFramePlayingHandler = afterPaint;
+        video.addEventListener('playing', afterPaint, { once: true });
+        video.addEventListener('seeked', afterPaint, { once: true });
+        if (!video.paused && video.readyState >= 2 && typeof video.requestVideoFrameCallback === 'function') {
+          restoreFrameCallbackId = video.requestVideoFrameCallback(() => {
+            restoreFrameCallbackId = 0;
+            release();
+          });
+        } else if (!video.paused && video.readyState >= 2) {
+          afterPaint();
+        }
+        restoreFrameFallbackTimer = window.setTimeout(release, 1400);
+      }
+
       function playIntro() {
         if (intro.classList.contains('is-broken')) return;
         intro.muted = !soundEnabled;
@@ -780,6 +875,7 @@
 
       function setMode(mode) {
         if (mode === currentMode) return;
+        clearRestoreFrame();
         currentMode = mode;
         body.dataset.mode = mode;
 
@@ -1434,6 +1530,7 @@
       });
       document.addEventListener('visibilitychange', () => {
         if (document.hidden) {
+          captureActiveVideoFrame();
           stopMainAudio();
           safePause(intro);
           safePause(outro);
@@ -1441,10 +1538,14 @@
         } else {
           updateFromScroll();
           if (currentMode === 'intro') {
+            keepRestoreFrameUntilVideoUpdates(intro);
             playIntro();
           } else if (currentMode === 'outro') {
+            keepRestoreFrameUntilVideoUpdates(outro);
             safePlay(outro);
             startOutroMusic();
+          } else {
+            keepRestoreFrameUntilVideoUpdates(main);
           }
         }
       });
