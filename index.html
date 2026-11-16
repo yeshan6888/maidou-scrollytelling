@@ -737,26 +737,27 @@
       function playIntro() {
         if (intro.classList.contains('is-broken')) return;
         intro.muted = !soundEnabled;
+        const resumeMuted = () => {
+          introAudioUnlocked = false;
+          intro.muted = true;
+          try {
+            const fallback = intro.play();
+            if (fallback && typeof fallback.catch === 'function') fallback.catch(() => {});
+          } catch (_) { /* keep the intro frame available if playback is blocked */ }
+        };
         try {
           const result = intro.play();
           if (result && typeof result.then === 'function') {
             result.then(() => {
               if (!intro.muted) introAudioUnlocked = true;
             }).catch(() => {
-              if (introAudioUnlocked || !soundEnabled) {
-                if (!soundEnabled) safePlay(intro);
-                return;
-              }
-              intro.muted = true;
-              const fallback = intro.play();
-              if (fallback && typeof fallback.catch === 'function') fallback.catch(() => {});
+              resumeMuted();
             });
           } else if (!intro.muted) {
             introAudioUnlocked = true;
           }
         } catch (_) {
-          if (!introAudioUnlocked) intro.muted = true;
-          safePlay(intro);
+          resumeMuted();
         }
       }
 
