@@ -6,6 +6,19 @@
   <meta name="theme-color" content="#1d1b18">
   <meta name="description" content="麦兜的一段小小生活切片。向下继续，向上重看。">
   <title>麦兜 · 一只小鼠的日常</title>
+  <script>
+    (() => {
+      const ua = navigator.userAgent || '';
+      const isIPadOS = /Macintosh/i.test(ua) && navigator.maxTouchPoints > 1;
+      const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(ua) || isIPadOS;
+      if (!isMobile) return;
+      document.documentElement.classList.add('mobile-device');
+      const portrait = window.matchMedia
+        ? window.matchMedia('(orientation: portrait)').matches
+        : window.innerHeight >= window.innerWidth;
+      if (portrait) document.documentElement.classList.add('orientation-blocked');
+    })();
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600&family=Noto+Serif+SC:wght@400;500;600;700;800&family=Ma+Shan+Zheng&display=swap" rel="stylesheet">
@@ -111,6 +124,79 @@
     }
 
     body[data-entry="closed"] .cinema-shade { background: transparent; }
+
+    html.orientation-blocked,
+    html.orientation-fading {
+      overflow: hidden;
+      overscroll-behavior: none;
+      touch-action: none;
+    }
+
+    html.orientation-blocked body,
+    html.orientation-fading body {
+      overflow: hidden;
+      overscroll-behavior: none;
+      touch-action: none;
+    }
+
+    .orientation-gate {
+      position: fixed;
+      z-index: 30;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      padding:
+        max(28px, env(safe-area-inset-top))
+        max(28px, env(safe-area-inset-right))
+        max(28px, env(safe-area-inset-bottom))
+        max(28px, env(safe-area-inset-left));
+      color: var(--cream);
+      background: rgba(17, 19, 21, .94);
+      -webkit-backdrop-filter: blur(12px);
+      backdrop-filter: blur(12px);
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      touch-action: none;
+      overscroll-behavior: contain;
+      transition: opacity .34s ease, visibility 0s linear .34s;
+    }
+
+    html.orientation-blocked .orientation-gate {
+      opacity: 1;
+      visibility: visible;
+      pointer-events: auto;
+      transition: opacity .34s ease, visibility 0s linear 0s;
+    }
+
+    html.orientation-fading .orientation-gate {
+      opacity: 0;
+      visibility: visible;
+      pointer-events: auto;
+      transition: opacity .34s ease, visibility 0s linear 0s;
+    }
+
+    .orientation-message {
+      display: grid;
+      justify-items: center;
+      gap: 24px;
+      width: min(100%, 460px);
+      text-align: center;
+    }
+
+    .orientation-icon {
+      width: 54px;
+      height: 54px;
+      color: rgba(251, 244, 233, .82);
+    }
+
+    .orientation-message p {
+      max-width: 22em;
+      margin: 0;
+      font: 500 clamp(17px, 3vw, 21px)/1.85 var(--sans);
+      letter-spacing: .045em;
+      text-wrap: pretty;
+    }
 
     .entry-gate {
       position: fixed;
@@ -527,6 +613,9 @@
       .cue-cn { font-size: 12px; }
       .cue-arrow { width: 18px; height: 20px; }
       .replay-button { font-size: 11px; }
+      .orientation-message { gap: 19px; }
+      .orientation-icon { width: 46px; height: 46px; }
+      .orientation-message p { font-size: clamp(16px, 4.2vw, 19px); }
 
       .caption h1 {
         max-width: 15em;
@@ -592,6 +681,17 @@
         <img src="网站素材/butten.png" alt="点击进入小鼠麦兜日记">
       </button>
       <p class="entry-hint">记得打开声音哦</p>
+    </div>
+  </div>
+
+  <div id="orientation-gate" class="orientation-gate" role="status" aria-live="polite">
+    <div class="orientation-message">
+      <svg class="orientation-icon" viewBox="0 0 54 54" fill="none" aria-hidden="true">
+        <rect x="18" y="5" width="18" height="34" rx="4" stroke="currentColor" stroke-width="1.7"/>
+        <path d="M24 33h6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+        <path d="M8 23a19 19 0 0 1 30-13m0 0V4m0 6h-6M46 31a19 19 0 0 1-30 13m0 0v6m0-6h6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <p>为保证良好体验，请将手机横屏后继续浏览</p>
     </div>
   </div>
 
@@ -661,7 +761,12 @@
 
       const root = document.documentElement;
       const body = document.body;
+      const mobileOrientationEnabled = root.classList.contains('mobile-device');
+      const orientationMediaQuery = mobileOrientationEnabled && window.matchMedia
+        ? window.matchMedia('(orientation: portrait)')
+        : null;
       const entryButton = document.getElementById('entry-button');
+      const orientationGate = document.getElementById('orientation-gate');
       const scroller = document.getElementById('scroll-space');
       const intro = document.getElementById('intro-video');
       const main = document.getElementById('main-video');
@@ -712,6 +817,11 @@
       let restoreFramePlayingHandler = null;
       let restoreFrameCallbackId = 0;
       let restoreFrameFallbackTimer = 0;
+      let orientationBlocked = mobileOrientationEnabled && root.classList.contains('orientation-blocked');
+      let orientationFading = false;
+      let orientationStoredProgress = 0;
+      let orientationFadeTimer = 0;
+      const orientationInertState = new Map();
 
       const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
       const finite = (value) => Number.isFinite(value) && value > 0;
@@ -749,6 +859,82 @@
         const max = maxScrollY();
         const progress = max > 0 ? clamp(window.scrollY / max, 0, 1) : 0;
         return { progress, time: progress * duration, max };
+      }
+
+      function setOrientationInert(locked) {
+        if (!mobileOrientationEnabled) return;
+        if (locked) {
+          Array.from(body.children).forEach((element) => {
+            if (element === orientationGate) return;
+            if (!orientationInertState.has(element)) orientationInertState.set(element, element.inert);
+            element.inert = true;
+          });
+          return;
+        }
+        orientationInertState.forEach((wasInert, element) => {
+          if (element.isConnected) element.inert = wasInert;
+        });
+        orientationInertState.clear();
+      }
+
+      function enterPortraitGate() {
+        if (!mobileOrientationEnabled) return;
+        if (!orientationBlocked) {
+          orientationStoredProgress = entryOpened
+            ? clamp(targetTime / Math.max(1, duration), 0, 1)
+            : 0;
+        }
+        orientationBlocked = true;
+        orientationFading = false;
+        window.clearTimeout(orientationFadeTimer);
+        orientationFadeTimer = 0;
+        root.classList.remove('orientation-fading');
+        root.classList.add('orientation-blocked');
+        setOrientationInert(true);
+        window.clearTimeout(idleTimer);
+        idleTimer = 0;
+        if (snapInProgress) cancelSnap();
+        touchStart = null;
+        touchDidMove = false;
+        updateScrollHeight();
+        const lockedY = orientationStoredProgress * maxScrollY();
+        window.scrollTo(0, lockedY);
+        lastObservedScrollY = window.scrollY;
+      }
+
+      function leavePortraitGate() {
+        if (!mobileOrientationEnabled || !orientationBlocked || orientationFading) return;
+        orientationFading = true;
+        root.classList.remove('orientation-blocked');
+        root.classList.add('orientation-fading');
+        window.clearTimeout(orientationFadeTimer);
+        orientationFadeTimer = window.setTimeout(() => {
+          const portrait = orientationMediaQuery
+            ? orientationMediaQuery.matches
+            : window.innerHeight >= window.innerWidth;
+          if (portrait) {
+            enterPortraitGate();
+            return;
+          }
+          orientationBlocked = false;
+          orientationFading = false;
+          root.classList.remove('orientation-fading', 'orientation-blocked');
+          setOrientationInert(false);
+          updateScrollHeight();
+          const restoredY = orientationStoredProgress * maxScrollY();
+          window.scrollTo(0, restoredY);
+          lastObservedScrollY = window.scrollY;
+          updateFromScroll();
+        }, 360);
+      }
+
+      function syncOrientationGate() {
+        if (!mobileOrientationEnabled) return;
+        const portrait = orientationMediaQuery
+          ? orientationMediaQuery.matches
+          : window.innerHeight >= window.innerWidth;
+        if (portrait) enterPortraitGate();
+        else leavePortraitGate();
       }
 
       function safePlay(video) {
@@ -1416,7 +1602,7 @@
       }
 
       function onUserIntent(event) {
-        if (!entryOpened) return;
+        if (orientationBlocked || !entryOpened) return;
         const type = event && event.type;
         if (type !== 'wheel' && type !== 'touchmove' && event && event.target && event.target.closest && event.target.closest('#sound-toggle, #replay-button')) return;
         if (type === 'wheel' && event.deltaY) lastUserScrollDirection = event.deltaY > 0 ? 1 : -1;
@@ -1433,7 +1619,7 @@
       }
 
       function onTouchStart(event) {
-        if (!entryOpened) return;
+        if (orientationBlocked || !entryOpened) return;
         if (event.target && event.target.closest && event.target.closest('#sound-toggle, #replay-button')) {
           touchStart = null;
           touchDidMove = false;
@@ -1451,6 +1637,10 @@
       }
 
       function onTouchMove(event) {
+        if (orientationBlocked) {
+          if (event.cancelable) event.preventDefault();
+          return;
+        }
         if (!touchStart || !event.touches || event.touches.length !== 1) return;
         const touch = event.touches[0];
         const dx = touch.clientX - touchStart.x;
@@ -1462,6 +1652,11 @@
       }
 
       function onTouchEnd(event) {
+        if (orientationBlocked) {
+          touchStart = null;
+          touchDidMove = false;
+          return;
+        }
         if (!touchStart) return;
         const start = touchStart;
         touchStart = null;
@@ -1498,6 +1693,12 @@
       }
 
       function onScroll() {
+        if (orientationBlocked) {
+          const lockedY = orientationStoredProgress * maxScrollY();
+          if (Math.abs(window.scrollY - lockedY) > 1) window.scrollTo(0, lockedY);
+          lastObservedScrollY = window.scrollY;
+          return;
+        }
         if (!entryOpened) {
           window.scrollTo(0, 0);
           return;
@@ -1582,11 +1783,29 @@
         applyProgress(1);
       });
       window.addEventListener('resize', () => {
+        syncOrientationGate();
         updateScrollHeight();
-        updateFromScroll();
+        if (orientationBlocked) {
+          const lockedY = orientationStoredProgress * maxScrollY();
+          window.scrollTo(0, lockedY);
+          lastObservedScrollY = window.scrollY;
+        } else {
+          updateFromScroll();
+        }
       }, { passive: true });
       window.addEventListener('scroll', onScroll, { passive: true });
       window.addEventListener('wheel', onUserIntent, { passive: true });
+      if (mobileOrientationEnabled) {
+        window.addEventListener('wheel', (event) => {
+          if (orientationBlocked && event.cancelable) event.preventDefault();
+        }, { passive: false });
+        window.addEventListener('orientationchange', syncOrientationGate, { passive: true });
+        if (orientationMediaQuery) {
+          if (orientationMediaQuery.addEventListener) orientationMediaQuery.addEventListener('change', syncOrientationGate);
+          else if (orientationMediaQuery.addListener) orientationMediaQuery.addListener(syncOrientationGate);
+        }
+        if (orientationBlocked) setOrientationInert(true);
+      }
       window.addEventListener('touchstart', onTouchStart, { passive: true });
       window.addEventListener('touchmove', onTouchMove, { passive: false });
       window.addEventListener('touchend', onTouchEnd, { passive: true });
@@ -1594,7 +1813,13 @@
       window.addEventListener('pointerdown', onUserIntent, { passive: true });
       window.addEventListener('keydown', (event) => {
         const scrollKeys = ['ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', ' ', 'Home', 'End'];
-        if (scrollKeys.includes(event.key)) onUserIntent(event);
+        if (scrollKeys.includes(event.key)) {
+          if (orientationBlocked) {
+            event.preventDefault();
+            return;
+          }
+          onUserIntent(event);
+        }
       });
       document.addEventListener('visibilitychange', () => {
         if (document.hidden) {
@@ -1604,7 +1829,7 @@
           safePause(outro);
           safePause(music);
         } else {
-          updateFromScroll();
+          if (!orientationBlocked) updateFromScroll();
           if (currentMode === 'intro') {
             keepRestoreFrameUntilVideoUpdates(intro);
             playIntro();
