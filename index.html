@@ -1439,6 +1439,12 @@
           safePause(music);
         } else {
           updateFromScroll();
+          if (currentMode === 'intro') {
+            playIntro();
+          } else if (currentMode === 'outro') {
+            safePlay(outro);
+            startOutroMusic();
+          }
         }
       });
 
