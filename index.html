@@ -689,7 +689,7 @@
 </head>
 <body data-mode="intro" data-entry="closed">
   <div class="video-stage" aria-hidden="true">
-    <video id="intro-video" class="scene" data-src="网站素材/intro-loop.mp4" data-mobile-src="网站素材/intro-mobile.mp4" autoplay loop playsinline preload="none" tabindex="-1"></video>
+    <video id="intro-video" class="scene" data-src="网站素材/intro-loop.mp4" data-mobile-src="网站素材/intro-mobile.mp4" autoplay loop muted playsinline preload="none" tabindex="-1"></video>
     <video id="main-video" class="scene" data-src="网站素材/main.mp4" data-mobile-src="网站素材/main-mobile.mp4" muted playsinline preload="none" tabindex="-1"></video>
     <video id="outro-video" class="scene" data-src="网站素材/outro-loop.mp4" data-mobile-src="网站素材/outro-mobile.mp4" loop muted playsinline preload="none" tabindex="-1"></video>
     <canvas id="restore-frame" class="restore-frame" aria-hidden="true"></canvas>
@@ -843,6 +843,7 @@
       let orientationStoredProgress = 0;
       let orientationFadeTimer = 0;
       let orientationSyncFrame = 0;
+      let introFallbackAttempted = false;
       const orientationInertState = new Map();
 
       const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
@@ -1090,7 +1091,9 @@
 
       function playIntro() {
         if (intro.classList.contains('is-broken')) return;
-        intro.muted = !soundEnabled;
+        // Browsers reject autoplay when a video has audible sound. Start silently;
+        // the entry-button gesture unlocks the original audio immediately afterward.
+        intro.muted = !soundEnabled || !introAudioUnlocked;
         const resumeMuted = () => {
           introAudioUnlocked = false;
           intro.muted = true;
@@ -1811,9 +1814,25 @@
 
       [intro, main, outro].forEach((video) => {
         video.addEventListener('error', () => {
+          if (video === intro && !introFallbackAttempted && video.getAttribute('src') === video.dataset.mobileSrc && video.dataset.src) {
+            introFallbackAttempted = true;
+            safePause(intro);
+            intro.classList.remove('is-broken');
+            intro.removeAttribute('src');
+            try { intro.load(); } catch (_) { /* continue with the standard source */ }
+            intro.setAttribute('src', intro.dataset.src);
+            intro.muted = true;
+            try { intro.load(); } catch (_) { /* playback will retry on the next gesture */ }
+            if (currentMode === 'intro') playIntro();
+            return;
+          }
           const label = video === intro ? '片头动画' : (video === main ? '主影片' : '片尾动画');
           setMediaFailure(video, label);
         });
+      });
+
+      intro.addEventListener('canplay', () => {
+        if (currentMode === 'intro' && intro.paused && !intro.classList.contains('is-broken')) playIntro();
       });
 
       entryButton.addEventListener('click', enterStory);
