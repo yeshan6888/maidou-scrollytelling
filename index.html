@@ -579,9 +579,9 @@
 </head>
 <body data-mode="intro" data-entry="closed">
   <div class="video-stage" aria-hidden="true">
-    <video id="intro-video" class="scene" src="网站素材/intro-loop.mp4" autoplay loop playsinline preload="auto" tabindex="-1"></video>
-    <video id="main-video" class="scene" data-src="网站素材/main.mp4" muted playsinline preload="none" tabindex="-1"></video>
-    <video id="outro-video" class="scene" data-src="网站素材/outro-loop.mp4" loop muted playsinline preload="none" tabindex="-1"></video>
+    <video id="intro-video" class="scene" data-src="网站素材/intro-loop.mp4" data-mobile-src="网站素材/intro-mobile.mp4" autoplay loop playsinline preload="none" tabindex="-1"></video>
+    <video id="main-video" class="scene" data-src="网站素材/main.mp4" data-mobile-src="网站素材/main-mobile.mp4" muted playsinline preload="none" tabindex="-1"></video>
+    <video id="outro-video" class="scene" data-src="网站素材/outro-loop.mp4" data-mobile-src="网站素材/outro-mobile.mp4" loop muted playsinline preload="none" tabindex="-1"></video>
     <canvas id="restore-frame" class="restore-frame" aria-hidden="true"></canvas>
   </div>
   <div class="cinema-shade" aria-hidden="true"></div>
@@ -703,6 +703,7 @@
       let mainAudioActive = false;
       let mainSeekSettling = false;
       let mainSeekTimeout = 0;
+      let mainSeekFinish = null;
       let musicFadeFrame = 0;
       let musicFadeCompletion = null;
       let touchStart = null;
@@ -771,7 +772,9 @@
         if (!video || video.classList.contains('is-broken')) return;
         video.preload = preload || 'metadata';
         if (video.getAttribute('src')) return;
-        const source = video.dataset.src;
+        const source = shouldDeferHeavyMedia() && video.dataset.mobileSrc
+          ? video.dataset.mobileSrc
+          : video.dataset.src;
         if (!source) return;
         video.setAttribute('src', source);
         try { video.load(); } catch (_) { /* the source will load on first playback */ }
@@ -892,6 +895,7 @@
 
       function setMode(mode) {
         if (mode === currentMode) return;
+        if (currentMode === 'main' && mode !== 'main') cancelPendingMainSeek();
         clearRestoreFrame();
         currentMode = mode;
         body.dataset.mode = mode;
@@ -911,8 +915,7 @@
           stopMainAudio();
           safePause(intro);
           safePause(main);
-          ensureVideoLoaded(outro, 'auto');
-          safePlay(outro);
+          playOutroLoop();
           startOutroMusic();
         }
       }
@@ -1014,6 +1017,39 @@
         } catch (_) { /* media may be unavailable */ }
       }
 
+      function cancelPendingMainSeek() {
+        window.clearTimeout(mainSeekTimeout);
+        mainSeekTimeout = 0;
+        if (mainSeekFinish) main.removeEventListener('seeked', mainSeekFinish);
+        mainSeekFinish = null;
+        mainSeekSettling = false;
+      }
+
+      function playOutroLoop() {
+        ensureVideoLoaded(outro, 'auto');
+        outro.loop = true;
+        outro.muted = true;
+        let retryBound = false;
+        const retryWhenReady = () => {
+          if (retryBound) return;
+          retryBound = true;
+          const retry = () => {
+            outro.removeEventListener('loadeddata', retry);
+            outro.removeEventListener('canplay', retry);
+            if (currentMode === 'outro' && !outro.classList.contains('is-broken')) safePlay(outro);
+          };
+          outro.addEventListener('loadeddata', retry, { once: true });
+          outro.addEventListener('canplay', retry, { once: true });
+        };
+        safePlay(outro).then((started) => {
+          if (started || currentMode !== 'outro' || outro.classList.contains('is-broken')) return;
+          if (outro.readyState >= 2) window.setTimeout(() => {
+            if (currentMode === 'outro') safePlay(outro);
+          }, 120);
+          else retryWhenReady();
+        });
+      }
+
       function settleMainAtBeat(time) {
         const frameTime = clamp(time, 0, Math.max(0, duration - 0.04));
         targetTime = frameTime;
@@ -1028,8 +1064,13 @@
         });
         lastSettledBeatIndex = closestIndex;
         stopMainAudio();
+        if (currentMode === 'outro') {
+          cancelPendingMainSeek();
+          return;
+        }
         if (main.classList.contains('is-broken') || main.readyState < 1) return;
 
+        cancelPendingMainSeek();
         safePause(main);
         main.muted = true;
         if (!main.seeking && Math.abs(main.currentTime - frameTime) < 0.003) return;
@@ -1042,9 +1083,11 @@
           window.clearTimeout(mainSeekTimeout);
           main.removeEventListener('seeked', finish);
           mainSeekSettling = false;
+          if (mainSeekFinish === finish) mainSeekFinish = null;
           safePause(main);
         };
 
+        mainSeekFinish = finish;
         main.addEventListener('seeked', finish);
         try {
           main.currentTime = frameTime;
@@ -1244,6 +1287,7 @@
         ignoreIdleUntil = performance.now() + 1000;
         targetTime = 0;
         activeCaption = -1;
+        cancelPendingMainSeek();
         stopMainAudio();
         safePause(main);
         safePause(outro);
@@ -1489,10 +1533,13 @@
           const smoothing = 1 - Math.exp(-dt / 82);
           let next = actual + error * smoothing;
           if (Math.abs(error) < 0.012) next = targetTime;
-          const interval = window.matchMedia('(pointer: coarse)').matches ? 64 : 34;
-          if (Math.abs(error) > 0.012 && now - lastSeekTime >= interval) {
+          const coarsePointer = window.matchMedia('(pointer: coarse)').matches;
+          const interval = coarsePointer ? 110 : 34;
+          if (Math.abs(error) > 0.012 && now - lastSeekTime >= interval && !(coarsePointer && main.seeking)) {
             try {
-              main.currentTime = clamp(next, 0, Math.max(0, duration - 0.04));
+              const seekTime = clamp(next, 0, Math.max(0, duration - 0.04));
+              if (coarsePointer && typeof main.fastSeek === 'function') main.fastSeek(seekTime);
+              else main.currentTime = seekTime;
               lastSeekTime = now;
             } catch (_) { /* metadata or media may not be ready yet */ }
           }
@@ -1563,7 +1610,7 @@
             playIntro();
           } else if (currentMode === 'outro') {
             keepRestoreFrameUntilVideoUpdates(outro);
-            safePlay(outro);
+            playOutroLoop();
             startOutroMusic();
           } else {
             keepRestoreFrameUntilVideoUpdates(main);
@@ -1571,6 +1618,7 @@
         }
       });
 
+      ensureVideoLoaded(intro, 'auto');
       if (shouldDeferHeavyMedia()) {
         music.preload = 'none';
       } else {
